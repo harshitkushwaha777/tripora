@@ -211,26 +211,81 @@ class TripService:
         days_res.sort(key=lambda x: x.day_number)
         return TripResponse(**t, days=days_res)
 
-    async def create_trip(self, data: TripCreate, days_data: Optional[List[Dict[str, Any]]] = None) -> TripResponse:
-        """Creates a new trip and persists it."""
+    async def create_trip(
+        self,
+        data: TripCreate,
+        days_data: Optional[List[Dict[str, Any]]] = None,
+        total_estimated_budget: float = 0.0,
+        ai_generation_metadata: Optional[Dict[str, Any]] = None,
+    ) -> TripResponse:
+        """Creates a new trip (with its days and activities) and persists it."""
         trip_id = str(uuid.uuid4())
         trip_payload = {
             "id": trip_id,
             "user_id": self.user.id,
             **data.model_dump(),
             "status": "planning",
-            "total_estimated_budget": 0.0,
-            "ai_generation_metadata": {}
+            "total_estimated_budget": total_estimated_budget,
+            "ai_generation_metadata": ai_generation_metadata or {}
         }
 
-        # 1. Try Supabase
+        # Build day and activity rows first, so Supabase and the dev store share the same ids
+        day_rows: List[Dict[str, Any]] = []
+        act_rows: List[Dict[str, Any]] = []
+        created_days: List[DayResponse] = []
+        for d in (days_data or []):
+            day_id = str(uuid.uuid4())
+            day_rows.append({
+                "id": day_id,
+                "trip_id": trip_id,
+                "day_number": d["day_number"],
+                "date": d["date"],
+                "title": d["title"],
+                "theme": d.get("theme", ""),
+                "notes": d.get("notes", ""),
+                "daily_estimated_cost": float(d.get("daily_estimated_cost", 0.0))
+            })
+            acts: List[ActivityResponse] = []
+            for idx, a in enumerate(d.get("activities", [])):
+                a_dict = a if isinstance(a, dict) else a.model_dump()
+                act_record = {
+                    "id": str(uuid.uuid4()),
+                    "day_id": day_id,
+                    "trip_id": trip_id,
+                    **a_dict,
+                    "order_index": idx
+                }
+                act_rows.append(act_record)
+                acts.append(ActivityResponse(**act_record))
+            created_days.append(DayResponse(
+                id=day_id,
+                trip_id=trip_id,
+                day_number=d["day_number"],
+                date=d["date"],
+                title=d["title"],
+                theme=d.get("theme"),
+                notes=d.get("notes"),
+                daily_estimated_cost=float(d.get("daily_estimated_cost", 0.0)),
+                activities=acts
+            ))
+
+        # 1. Try Supabase (trip first, then days, then activities)
         if self.user_token and self.user.id != "demo-user-id-00000000-0000-0000-0000-000000000001":
             try:
-                url = f"{self.supabase_url}/rest/v1/trips"
-                async with httpx.AsyncClient(timeout=8.0) as client:
-                    resp = await client.post(url, json=trip_payload, headers=self.headers)
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    resp = await client.post(f"{self.supabase_url}/rest/v1/trips", json=trip_payload, headers=self.headers)
                     if resp.status_code in (200, 201):
                         logger.info(f"Created trip {trip_id} in Supabase")
+                        if day_rows:
+                            resp = await client.post(f"{self.supabase_url}/rest/v1/itinerary_days", json=day_rows, headers=self.headers)
+                            if resp.status_code not in (200, 201):
+                                logger.warning(f"Supabase days insert failed: {resp.status_code} {resp.text[:300]}")
+                            elif act_rows:
+                                resp = await client.post(f"{self.supabase_url}/rest/v1/itinerary_activities", json=act_rows, headers=self.headers)
+                                if resp.status_code not in (200, 201):
+                                    logger.warning(f"Supabase activities insert failed: {resp.status_code} {resp.text[:300]}")
+                    else:
+                        logger.warning(f"Supabase trip insert failed: {resp.status_code} {resp.text[:300]}")
             except Exception as e:
                 logger.warning(f"Error persisting trip to Supabase: {e}")
 
@@ -242,48 +297,10 @@ class TripService:
             "role": "owner",
             "email": self.user.email
         }
-
-        created_days: List[DayResponse] = []
-        if days_data:
-            for d in days_data:
-                day_id = str(uuid.uuid4())
-                d_record = {
-                    "id": day_id,
-                    "trip_id": trip_id,
-                    "day_number": d["day_number"],
-                    "date": d["date"],
-                    "title": d["title"],
-                    "theme": d.get("theme", ""),
-                    "notes": d.get("notes", ""),
-                    "daily_estimated_cost": float(d.get("daily_estimated_cost", 0.0))
-                }
-                _DEV_STORE["days"][day_id] = d_record
-
-                acts: List[ActivityResponse] = []
-                for idx, a in enumerate(d.get("activities", [])):
-                    act_id = str(uuid.uuid4())
-                    a_dict = a if isinstance(a, dict) else a.model_dump()
-                    act_record = {
-                        "id": act_id,
-                        "day_id": day_id,
-                        "trip_id": trip_id,
-                        **a_dict,
-                        "order_index": idx
-                    }
-                    _DEV_STORE["activities"][act_id] = act_record
-                    acts.append(ActivityResponse(**act_record))
-
-                created_days.append(DayResponse(
-                    id=day_id,
-                    trip_id=trip_id,
-                    day_number=d["day_number"],
-                    date=d["date"],
-                    title=d["title"],
-                    theme=d.get("theme"),
-                    notes=d.get("notes"),
-                    daily_estimated_cost=float(d.get("daily_estimated_cost", 0.0)),
-                    activities=acts
-                ))
+        for row in day_rows:
+            _DEV_STORE["days"][row["id"]] = row
+        for row in act_rows:
+            _DEV_STORE["activities"][row["id"]] = row
 
         return TripResponse(**trip_payload, days=created_days)
 
