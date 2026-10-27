@@ -118,7 +118,7 @@ export const api = {
     const res = await fetch(`${config.api.baseUrl}/api/trips`, {
       method: 'POST',
       headers,
-      body: JSON.stringify(data),
+      body: JSON.stringify({ ...data, days: days ?? [] }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
