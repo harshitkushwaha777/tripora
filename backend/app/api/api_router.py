@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from backend.app.api.endpoints import health, itineraries, trips, collaborators
+from app.api.endpoints import health, itineraries, trips, collaborators
 
 api_router = APIRouter()
 
