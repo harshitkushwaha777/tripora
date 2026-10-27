@@ -2,9 +2,8 @@ import logging
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from app.config import settings
-from app.api.api_router import api_router
-
+from backend.app.config import settings
+from backend.app.api.api_router import api_router
 # Configure clean structured logging without leaking sensitive keys
 logging.basicConfig(
     level=logging.INFO,
