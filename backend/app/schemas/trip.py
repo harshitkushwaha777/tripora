@@ -94,6 +94,12 @@ class TripBase(BaseModel):
 class TripCreate(TripBase):
     pass
 
+class TripCreateWithItinerary(TripCreate):
+    """Trip payload that also carries the generated itinerary, so it gets saved with the trip."""
+    days: List[DayCreate] = Field(default_factory=list)
+    total_estimated_budget: float = Field(0.0, ge=0)
+    ai_generation_metadata: Dict[str, Any] = Field(default_factory=dict)
+
 class TripUpdate(BaseModel):
     title: Optional[str] = Field(None, min_length=2, max_length=150)
     destination: Optional[str] = None
