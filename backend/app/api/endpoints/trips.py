@@ -3,6 +3,7 @@ from typing import List, Optional, Dict, Any
 
 from backend.app.schemas.trip import (
     TripCreate,
+    TripCreateWithItinerary,
     TripUpdate,
     TripResponse,
     ActivityCreate,
@@ -34,11 +35,17 @@ async def list_trips(
 
 @router.post("", response_model=TripResponse, status_code=status.HTTP_201_CREATED)
 async def create_trip(
-    data: TripCreate,
+    data: TripCreateWithItinerary,
     service: TripService = Depends(get_trip_service)
 ):
-    """Creates a new trip."""
-    return await service.create_trip(data)
+    """Creates a new trip, including its generated days, activities and budget."""
+    trip = TripCreate(**data.model_dump(exclude={"days", "total_estimated_budget", "ai_generation_metadata"}))
+    return await service.create_trip(
+        trip,
+        days_data=[d.model_dump() for d in data.days],
+        total_estimated_budget=data.total_estimated_budget,
+        ai_generation_metadata=data.ai_generation_metadata,
+    )
 
 @router.get("/{trip_id}", response_model=TripResponse)
 async def get_trip(
